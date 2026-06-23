@@ -150,6 +150,17 @@ async function main() {
     }
     await downloadVersion(env, n, v.url);
   }
+  if (args.includes("--review")) {
+    // 上线三元组草稿:判定可上线时直接抄进审查报告 §4,降低漏填(version 自行改为你审过、判定可上线的那一版)。
+    const versions = (state.versions || []).map((v) => v.version);
+    const latest = versions.length ? Math.max(...versions) : null;
+    const active = state.active_version;
+    console.log("\n[review] === 上线三元组草稿(判定『可上线』时抄进报告 §4)===");
+    console.log(`  建议 activate 的 version : v${latest}  (本次审过、判定可上线的那一版,自行确认)`);
+    console.log(`  该 version 的 activity_uuid: ${env.uuid}`);
+    console.log(`  当前 active version       : ${active == null ? "(当前无 active / 未绑定)" : "v" + active}`);
+    console.log("[review] 报告 + 三元组交持 is_internal 登录态的内部账号,按 skill-internal-publish/ runbook 执行 activate。\n");
+  }
   if (!targets.length) console.log("[review] 仅列版本;加 --version N 或 --review 下载产物再审。");
 }
 
