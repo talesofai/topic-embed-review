@@ -21,10 +21,12 @@
 ## 4. 路由 / 返回栈
 - `history\.(pushState|replaceState)` → 违规(应用 hash 路由 / 内存路由,否则污染宿主返回栈)。
 
-## 5. 实际 CSP(看 `_review/vN/_csp.txt`)
-- `script-src` 含外站域 / `*` / `'unsafe-eval'` → 可疑或违规(基线只该是 `'self' 'unsafe-inline'` + 运营在线白名单下发的已审域)。
-- `connect-src` 多出非 API host 的外站 → 可疑(确认是否在已审白名单内)。
-- **没有 CSP 响应头** → 违规(deploy 应注入;缺失说明上传链路异常)。
+## 5. CSP —— 不审"缺不缺",审"产物会不会破坏 CSP 安全预期"
+CSP 由**部署 / 宿主动态注入到 OSS 响应头**,产物 HTML 里本就没有、也不该有 CSP(SDK / 创作者产物不管 CSP)。
+**所以"产物里没有 CSP"是正常的,绝不报「CSP 缺失 / 违规」。** 审查只看产物有没有**破坏** CSP 预期的行为:
+- 产物**自设** `<meta http-equiv="content-security-policy">`:`grep -rniE "http-equiv=[\"']?content-security-policy" _review/vN/` → 命中即违规(页面不该自定义 CSP,会与注入头取交集致白屏 / 试图绕过)。
+- 产物引用**外站脚本 / 资源**(本会被注入的 CSP 拦)→ 即 §1 的外站资源违规,这才是 CSP 预期被触碰的真实信号。
+- `_csp.txt` **仅供「能取到响应头时」**核对注入是否符合预期(`script-src` 不该含外站 / `*` / `'unsafe-eval'`,`connect-src` 不该多出非 API host 的外站);**取不到 CSP 头(dev 草稿 / 缓存 / 无 token)不算产物违规**,本项跳过。
 
 ## 6. 自绘宿主顶栏(D9)
 - `position\s*:\s*(fixed|sticky)` 配同块 `top\s*:\s*0` → 疑似固定顶栏。

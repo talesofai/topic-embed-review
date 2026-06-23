@@ -77,7 +77,9 @@ async function downloadVersion(env, ver, url) {
   mkdirSync(dir, { recursive: true });
 
   const resp = await fetch(url); // OSS 公开,无需令牌
-  const csp = resp.headers.get("content-security-policy") || "(无 CSP 响应头!— 异常,记 [违规])";
+  const csp =
+    resp.headers.get("content-security-policy") ||
+    "(响应头未见 CSP。注:CSP 由部署/宿主动态注入,dev 草稿 / 缓存 / 无 token 时可能取不到——【不作为产物违规】,仅供能取到时核对注入。)";
   const html = await resp.text();
   writeFileSync(join(dir, "index.html"), html);
   writeFileSync(join(dir, "_csp.txt"), csp + "\n");

@@ -48,7 +48,10 @@ node scripts/fetch-versions.mjs --review       # 下载「当前 active」+「�
 2. **写接口痕迹**:`fetch`/`XMLHttpRequest` 带 `method: POST/PUT/DELETE/PATCH`、或打非 `/v1/embed/*` 的写 API → 违规(内嵌页只读)。
 3. **token 落地**:`localStorage` / `sessionStorage` / `document.cookie` 写 token → 违规。
 4. **history.pushState / replaceState** → 违规(污染宿主返回栈)。
-5. **实际 CSP**(看 `_csp.txt`):`script-src` 被放宽(含外站 / `*` / `'unsafe-eval'`)、`connect-src` 多出可疑外站 → 可疑 / 违规。
+5. **CSP — 不审"缺不缺",审"产物会不会破坏 CSP 安全预期"**:CSP 由**部署 / 宿主动态注入到 OSS 响应头**,产物 HTML 里**本就没有、也不该有**——所以**产物里看不到 CSP 是正常的,绝不报「CSP 缺失」**(SDK / 创作者产物不管 CSP)。审查只看产物有没有**破坏**我们的 CSP 安全预期:
+   - 产物**自设** `<meta http-equiv="content-security-policy">` → 违规(页面不该自定义 CSP,会与注入头取交集致白屏 / 或试图绕过)。
+   - 产物引用**外站脚本 / 资源**(本会被注入的 CSP 拦)→ 即 §1,这才是 CSP 预期被触碰的真实信号。
+   - `_csp.txt` **仅供能取到响应头时**核对注入是否符合预期(`script-src` 不该含外站 / `*` / `'unsafe-eval'`);若取不到(dev 草稿 / 缓存 / 无 token)**不算产物违规**,本项跳过即可。
 6. **自绘宿主顶栏(D9)**:`position:fixed|sticky` + `top:0`、「返回 / 分享 / 主页 / 举报」按钮文案、`env(safe-area-inset-*)` 顶部内边距 → 违规(这些宿主已提供,重画=冲突)。
 7. **暴露 OSS 真链**:`oss.talesofai.cn` 出现在 `<a href>` / 分享 / 可见文案 → 违规(对外身份须 `app.nieta.art/tag?hashtag=X`)。
 8. **越界 API**:`window.parent` 读 DOM/storage、`window.parent.postMessage`、`navigator.serviceWorker.register`、`new EventSource` → 违规。
