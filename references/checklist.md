@@ -41,6 +41,15 @@ CSP 由**部署 / 宿主动态注入到 OSS 响应头**,产物 HTML 里本就没
 - `window\.parent` 读 DOM / storage、`window\.parent\.postMessage`(应只经 SDK bridge)→ 违规。
 - `navigator\.serviceWorker\.register` → 违规(跨域 sandbox iframe 内无效,只污染控制台)。
 
+## 9. 运行期机密泄露(产物里不得夹带任何机密)
+产物(`index.html` + JS/CSS,含 sourcemap)里**不得出现任何运行期机密**:
+- **API key / secret / 令牌**:`grep -rniE "(api[_-]?key|secret|x-token|x-dev-publish-token|access[_-]?key|bearer\s+[A-Za-z0-9._-]{16,}|eyJ[A-Za-z0-9._-]{20,})" _review/vN/` → 命中读上下文,确系凭据即违规(embed token 由 SDK 运行期从宿主取,**绝不该硬编码进产物**;dev-publish / x-token 更不该出现)。
+- **内部 url / 后台路径**:`grep -rniE "(admin|internal|backstage|ops|/v1/topic-embed/|upload-grant|console\.|\.internal\.)" _review/vN/` → 命中非 `/v1/embed/*` 的内部接口 / 后台路径 / 内网域名即违规(内嵌页只该打只读 `/v1/embed/*`)。
+- 判定:命中即至少 **[可疑]**,确认是真机密 / 内部地址即 **[违规]**(拒绝上线)。压缩产物里字符串通常保留,grep 能命中。
+> **为什么这条单列(别误判"反正猜不到就安全")**:草稿 / 待审版本的 **OSS 版本目录是公开可读的**——`fetch-versions.mjs` 下载产物**连令牌都不用**(§1 已述)。
+> 它**不靠访问控制保护**:`uuid 不可猜` + `草稿未挂载到 /tag`(公众入口看不到) **都不是访问控制**——只要拿到 OSS url(或猜中 `.../<activity_uuid>/<version>/index.html` 结构),任何人都能直接 GET 到产物全文。
+> 所以**任何写进产物的机密 = 等同公开**。审查必须把"产物零机密"当硬红线,不能以"草稿没上线 / uuid 难猜"为由放过。
+
 ---
 
 ## 判定汇总

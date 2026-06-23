@@ -55,6 +55,7 @@ node scripts/fetch-versions.mjs --review       # 下载「当前 active」+「�
 6. **自绘宿主顶栏(D9)**:`position:fixed|sticky` + `top:0`、「返回 / 分享 / 主页 / 举报」按钮文案、`env(safe-area-inset-*)` 顶部内边距 → 违规(这些宿主已提供,重画=冲突)。
 7. **暴露 OSS 真链**:`oss.talesofai.cn` 出现在 `<a href>` / 分享 / 可见文案 → 违规(对外身份须 `app.nieta.art/tag?hashtag=X`)。
 8. **越界 API**:`window.parent` 读 DOM/storage、`window.parent.postMessage`、`navigator.serviceWorker.register`、`new EventSource` → 违规。
+9. **运行期机密泄露**:产物(含 sourcemap)里出现 API key / secret / 令牌(`x-token` / `x-dev-publish-token` / `eyJ...` JWT)、或内部 url / 后台路径(非 `/v1/embed/*` 的内部接口、`upload-grant`、内网域名)→ 至少可疑,确系机密即违规。**草稿 OSS 目录公开可读、下载连令牌都不用——uuid 不可猜 + 草稿未挂载都不是访问控制,写进产物的机密等同公开。**
 
 ## 3. 变更对比(相对当前 active)
 用 `--review` 同时下了 active 版与待审版后,对比两版的**关键信号集合**(不必逐字 diff 压缩产物):
@@ -68,6 +69,14 @@ node scripts/fetch-versions.mjs --review       # 下载「当前 active」+「�
 - **逐红线结论**:[通过] / [可疑] / [违规] + 证据(文件 + 片段)。
 - **变更摘要**:相对 active 的新增 / 移除风险信号。
 - **上线建议**:`可上线` / `需人工复核(列出哪几项)` / `拒绝上线(列出违规)`。
+- **上线三元组(建议 `可上线` 时必给,闭合"审查→内部上线"断点)**:报告结尾**必须**明确写出
+  ① **建议 activate 的 version**(本次审过、判定可上线的那一版,如 `v9`);
+  ② **该 version 的 activity_uuid**(`NIETA_ACTIVITY_UUID`,即本次审查的活动 uuid——上线动作按 activity 锚定);
+  ③ **当前 active version**(`active_version`,即现在线上挂的是哪一版;若 `enabled=false` / 未绑定则注明"当前无 active")。
+  这三元组让内部上线者无需回头猜:对哪个 activity、把哪一版 activate、相对现状是首发还是换版。
+  > **交接指针(本 skill 到此为止,不负责上线)**:审查只产报告,**不 activate、不上线**(scoped 令牌也调不动 prod/activate,会被后端 403)。
+  > 把上面三元组连同报告交给**内部运营(`is_internal` 账号)**,由其按**内部上线 runbook**执行 `activate`(或 `deploy:prod`)。
+  > 该 runbook 是 `skill-internal-publish/`(位于 **topic-sdk 仓库根**),**不随创作者项目交付、也不在本审查仓内**——你只交付报告 + 三元组,上线由持完整登录态的内部账号在那边完成。
 - 诚实标注静态审查的局限(哪些项只能 best-effort、建议补人工看渲染 / 审源码)。
 
 ## 校验门
