@@ -260,7 +260,13 @@ function renderMarkdown(result, diff, meta) {
   L.push("");
   if (meta) {
     L.push(`- 活动 uuid:${meta.activityUuid ?? "(未提供)"}`);
-    if (meta.spaceUrl) L.push(`- cohub space:${meta.spaceUrl}`);
+    if (meta.cohubUrl) {
+      const kindLabel = meta.cohubKind === "session" ? "session" : meta.cohubKind === "space" ? "space" : "链接";
+      L.push(`- cohub ${kindLabel}:${meta.cohubUrl}`);
+      if (meta.cohubKind === "session" && meta.spaceUrl) L.push(`  - 源码所在 space:${meta.spaceUrl}(源码合审去这里)`);
+    } else {
+      L.push(`- cohub 链接:(未提供 — 无法做源码合审,§2.5 跳过,判定仅基于压缩产物,可靠性下降)`);
+    }
     L.push(`- 审查时机:${meta.stamp ?? "(未标注,由调用方注入时间戳)"}`);
     L.push("");
   }
@@ -298,21 +304,42 @@ function renderMarkdown(result, diff, meta) {
   return L.join("\n");
 }
 
-function loadEnvActivityUuid() {
+/** 读 .env 为 map(与 fetch-versions.mjs 同款解析;audit 自己也需要,不然 .env 里的 COHUB_*_URL 读不到)。 */
+function readEnvFile() {
+  const out = {};
   const p = join(SKILL_ROOT, ".env");
-  if (!existsSync(p)) return null;
+  if (!existsSync(p)) return out;
   for (const raw of readFileSync(p, "utf8").split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const i = line.indexOf("=");
     if (i < 0) continue;
-    if (line.slice(0, i).trim() === "NIETA_ACTIVITY_UUID") {
-      let v = line.slice(i + 1).trim();
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-      return v.startsWith("<") ? null : v;
-    }
+    const k = line.slice(0, i).trim();
+    let v = line.slice(i + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    out[k] = v;
   }
-  return null;
+  return out;
+}
+
+/** 占位/空值判定(.env.example 里的 <...> 占位视为未填)。 */
+function realValue(v) {
+  return v && !v.startsWith("<") ? v : null;
+}
+
+/**
+ * 解析 cohub 链接 —— 同时接受 space 链接与 session 链接,都能抽出 spaceId(源码合审锚点)。
+ *   space   : https://cohub.run/spaces/<spaceId>
+ *   session : https://cohub.run/spaces/<spaceId>/sessions/<sessionId>
+ * 源码住在 space 里(session 只是其下的一次会话),故有 session 也能定位到源码所在 space。
+ */
+function parseCohubRef(url) {
+  if (!url) return null;
+  const spaceId = (url.match(/\/spaces\/([^/?#]+)/) || [])[1] || null;
+  const sessionId = (url.match(/\/sessions\/([^/?#]+)/) || [])[1] || null;
+  const kind = sessionId ? "session" : spaceId ? "space" : "unknown";
+  const spaceUrl = spaceId ? `https://cohub.run/spaces/${spaceId}` : null;
+  return { url, kind, spaceId, sessionId, spaceUrl };
 }
 
 function arg(name) {
@@ -340,10 +367,30 @@ function latestReviewDir() {
 }
 
 function main() {
-  const spaceUrl = arg("--space") || process.env.COHUB_SPACE_URL || null;
-  const activityUuid = loadEnvActivityUuid();
+  const env = readEnvFile();
+  // cohub 链接:命令行 --space / --session / --cohub 任一,或 .env 的 COHUB_SESSION_URL / COHUB_SPACE_URL。
+  // 三者优先级:显式命令行 > SESSION env > SPACE env。session 与 space 链接都接受(见 parseCohubRef)。
+  const cohubRaw =
+    arg("--session") ||
+    arg("--space") ||
+    arg("--cohub") ||
+    process.env.COHUB_SESSION_URL ||
+    process.env.COHUB_SPACE_URL ||
+    realValue(env.COHUB_SESSION_URL) ||
+    realValue(env.COHUB_SPACE_URL) ||
+    null;
+  const cohub = parseCohubRef(cohubRaw);
+  const activityUuid = realValue(process.env.NIETA_ACTIVITY_UUID) || realValue(env.NIETA_ACTIVITY_UUID);
   const stamp = arg("--stamp") || null; // 时间戳由调用方注入(脚本内不取系统时间,保持可复现)
-  const meta = { activityUuid, spaceUrl, stamp };
+  const meta = {
+    activityUuid,
+    cohubUrl: cohub?.url ?? null,
+    cohubKind: cohub?.kind ?? null, // "space" | "session" | "unknown" | null
+    spaceId: cohub?.spaceId ?? null,
+    sessionId: cohub?.sessionId ?? null,
+    spaceUrl: cohub?.spaceUrl ?? null, // 源码合审锚点(session 也归一到其所属 space)
+    stamp,
+  };
 
   let targetDir = arg("--dir");
   let baseDir = arg("--base");

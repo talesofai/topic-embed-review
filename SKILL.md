@@ -23,9 +23,12 @@ description: >-
 
 ## 输入(两个必需 + 一个条件)
 1. **`NIETA_ACTIVITY_UUID`**(必需):要审的话题活动 uuid。写进 `.env`。
-2. **cohub space 链接**(必需):被审内嵌页对应的 cohub space(形如 `https://cohub.run/spaces/<id>`)——
+2. **cohub 链接**(必需):被审内嵌页对应的 cohub **space 或 session** 链接,两种都接受:
+   - space:`https://cohub.run/spaces/<spaceId>`
+   - session:`https://cohub.run/spaces/<spaceId>/sessions/<sessionId>`(自动归一到所属 space 定位源码)
    **产物是压缩的,源码可读性远高于压缩产物**;审查必须结合源码,不能只看压缩 bundle。
-   传法:`--space <url>` 或环境变量 `COHUB_SPACE_URL`。它会被记进报告 meta,并触发"源码合审"步骤(§2.5)。
+   传法:`--session <url>` / `--space <url>` / `--cohub <url>`(哪个 flag 都行,内容是 session 还是 space 自动识别),
+   或环境变量 `COHUB_SESSION_URL` / `COHUB_SPACE_URL`。它会被记进报告 meta,并触发"源码合审"步骤(§2.5)。
 3. **`NIETA_DEV_PUBLISH_TOKEN`**(条件):拉版本清单要用(见 §0)。若你已直接拿到产物目录 / 源码,可只审本地。
 
 ## 0. 配置(token 复用创作者 SDK 那个)
@@ -34,11 +37,12 @@ description: >-
 - `NIETA_ACTIVITY_UUID`:要审的话题活动 uuid。
 - `NIETA_DEV_PUBLISH_TOKEN`:**和创作者发布同一个 dev-publish 令牌**(app 内「生成开发令牌」,绑该活动、只读)。
 - `NIETA_DEVELOP_PASS`:pre 联调填 `1`;prod 不设。
-- `COHUB_SPACE_URL`:被审内嵌页对应的 cohub space 链接(也可用 `--space` 传)。
+- `COHUB_SESSION_URL` 或 `COHUB_SPACE_URL`:被审内嵌页对应的 cohub session / space 链接(也可用 `--session`/`--space`/`--cohub` 传)。
 
 ## 1. 一条龙审查(推荐:自动化流程的主入口)
 ```
-node scripts/audit.mjs --review --space https://cohub.run/spaces/<id>
+node scripts/audit.mjs --review --session https://cohub.run/spaces/<spaceId>/sessions/<sessionId>
+# 只有 space 链接时:node scripts/audit.mjs --review --space https://cohub.run/spaces/<spaceId>
 ```
 它会:① `fetch-versions.mjs --review` 拉版本清单 + 下载「当前 active」和「最新草稿」两版产物 →
 ② 对最新草稿跑全部红线 → ③ 与 active 做变更对比 → ④ 写 `_review/vN/audit-report.{json,md}` → ⑤ **按判定退出**。
@@ -64,8 +68,8 @@ node scripts/audit.mjs --dir _review/v9 --json-only # 只出 json(自动化流�
 - **`self-made-bridge`(可疑)**:直接 `postMessage` + 自造 `*-ready` 事件名 = 绕过 SDK 自己发明握手协议。
 - 其余:外站资源 / 写接口 / token 落地 / pushState / 自设 CSP / 自绘顶栏(D9)/ 暴露 OSS 真链 / 越界 API / 机密泄露。
 
-## 2.5 源码合审(给了 `--space` 时必做)
-引擎审的是**压缩产物**,只能 best-effort。拿到 cohub space 后,**必须**再结合源码确认引擎标 `[可疑]` 的项:
+## 2.5 源码合审(给了 cohub 链接时必做)
+引擎审的是**压缩产物**,只能 best-effort。拿到 cohub session/space 后(session 归一到其所属 space 看源码),**必须**再结合源码确认引擎标 `[可疑]` 的项:
 - 打开 space,重点看 `package.json`(有没有 `@talesofai/topic-sdk` 依赖)、入口文件(`main.tsx`/`boot.ts` 等,有没有 `createTopicSDK`)。
 - **`package.json` 无 topic-sdk 依赖 = 铁证没接 SDK**,即便引擎因某种字符串巧合没报 `sdk-integration`,你也要在报告里判违规。
 - 源码里 `[可疑]` 项(如 D9 顶栏、非 embed API)读上下文确认是真违规还是误报。
@@ -90,5 +94,5 @@ node scripts/audit.mjs --dir _review/v9 --json-only # 只出 json(自动化流�
 ## 校验门
 - 审查结论以 `audit.mjs` 退出码 + `audit-report.json` 为准,人工复核只收窄不放宽(可疑不能无理由改通过)。
 - 每条 [违规] / [可疑] 都有**文件 + 证据片段**(引擎已附),不空口下结论。
-- 给了 `--space` 就**必须**做 §2.5 源码合审(至少核 package.json 依赖)。
+- 给了 cohub 链接(`--session`/`--space`/`--cohub`)就**必须**做 §2.5 源码合审(至少核 package.json 依赖)。
 - 没有调用任何写接口、没有 activate、没有回显令牌值。

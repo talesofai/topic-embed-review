@@ -14,8 +14,9 @@
 
 ## 输入(两个必需)
 1. `NIETA_ACTIVITY_UUID`:要审的话题活动 uuid。
-2. **cohub space 链接**(`--space <url>` 或 `COHUB_SPACE_URL`):被审内嵌页对应的 cohub space。
-   压缩产物可读性差,审查必须结合源码,故 space 链接是必需输入(见 SKILL §2.5 源码合审)。
+2. **cohub 链接**(`--session`/`--space`/`--cohub <url>` 或 `COHUB_SESSION_URL`/`COHUB_SPACE_URL`):
+   被审内嵌页对应的 cohub **space 或 session** 链接(session 自动归一到所属 space 看源码)。
+   压缩产物可读性差,审查必须结合源码,故此项是必需输入(见 SKILL §2.5 源码合审)。
 
 ## 放进 cohub
 把整个 `topic-embed-review/` 目录放进 cohub space 的 skills 位置(如 `.claude/skills/topic-embed-review/`)。agent 看到「审查话题页 / 上线审查 / embed review」类意图即触发。
@@ -31,7 +32,8 @@
 ## 跑
 ```
 # 一条龙(推荐,自动化流程主入口):拉版本 → 下载 active+最新草稿 → 跑红线引擎 → 按判定退出
-node scripts/audit.mjs --review --space https://cohub.run/spaces/<id>
+# cohub 链接 space 或 session 皆可:
+node scripts/audit.mjs --review --session https://cohub.run/spaces/<spaceId>/sessions/<sessionId>
 
 # 分步
 node scripts/fetch-versions.mjs --review              # 只下载 active + 最新草稿到 _review/
