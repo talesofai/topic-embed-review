@@ -1,8 +1,23 @@
-# 内嵌话题页上线红线审查清单(自包含)
+# 内嵌话题页上线红线审查清单(人读说明)
 
-对 `_review/vN/` 下的产物逐项查。grep 建议:`grep -rniE "<pattern>" _review/vN/`。
+> **执行依据是 `scripts/rules.mjs`(唯一事实源)+ `scripts/audit.mjs`(确定性引擎),不是本文件。**
+> 本文件只给人读:解释每条红线**为什么**是红线、命中后**怎么人工复核**。正则实现以 rules.mjs 为准;
+> 不要照着本文手敲 grep 当审查结论——那正是过去正则漂移 / 漏判的根源。跑 `node scripts/audit.mjs` 拿机器判定。
 
-> 产物是打包压缩的:字符串 / 类名 / URL / 文案通常**保留**(grep 能命中域名、API 路径、中文按钮文案),但变量名被压缩——语义判断(如"这段 fetch 是不是写")要结合上下文读源码片段。**拿不准 → [需人工复核]**,不要漏判也不要瞎判。
+红线新增了一条最关键的(本文旧版没有,是白屏事故根因):
+
+## 0. 必须接入官方 topic-sdk(rules: `sdk-integration` / `self-made-bridge`)
+- `sdk-integration`(**违规**):产物里找不到 SDK 握手指纹(`createTopicSDK` / `getEmbedToken` / `"hello"` / `{v:2}`)
+  = 页面根本没接官方 SDK。宿主只识别 SDK 发起的 frame-bridge v2 `hello` 握手;任何自造 postMessage 协议
+  **不会被宿主认可** → 页面必然加载失败(白屏)。这是确定性违规,拒绝上线。
+- `self-made-bridge`(**可疑**):直接 `window.parent.postMessage(...)`(含可选链 `?.`)配合自造的
+  `*-ready` / `embed_ready` / `nieta-ready` 事件名 = 接入方绕过 SDK、自己发明握手协议(事故根因典型特征)。
+  SDK 内部通信不暴露这类自造事件名;命中需结合源码(`package.json` 有没有 topic-sdk 依赖)确认。
+- **源码合审**:`package.json` 无 `@talesofai/topic-sdk` 依赖 = 铁证没接 SDK,直接判违规(即便压缩产物字符串巧合没触发正则)。
+
+---
+
+以下为历史红线的人读说明(实现见 rules.mjs;审查用 audit.mjs,不要照抄 grep):
 
 ## 1. 外站资源(「禁外站显示 / 外站 JS」)
 - 外站 `<script src>`:`grep -rniE "<script[^>]+src=[\"']https?://" _review/vN/` → 命中**非 `oss.talesofai.cn`** 即违规。

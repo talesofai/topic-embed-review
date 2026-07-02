@@ -2,7 +2,7 @@
 name: topic-embed-review
 description: >-
   审查 nieta-app 内嵌话题页(topic embed)的草稿/待上线版本:拉版本清单、下载各版本 OSS 产物、
-  按上线红线(只读 / CSP / 外站资源 / 写接口 / 自绘宿主顶栏 / pushState / token 存储等)做安全与合规审查、
+  跑确定性红线审查引擎(audit.mjs)产出机器可判的判定 + 结构化报告、对可疑项做人工语义复核、
   对比版本间变更,产出给运营 / owner 的上线建议报告。全程只读——不上线、不改后端、不持用户完整登录态。
   Triggers: 内嵌页审查, 话题页版本审查, 上线审查, embed review, 审查话题页, 安全审查内嵌页, 版本审查。
 ---
@@ -12,74 +12,83 @@ description: >-
 你(agent)是内嵌话题页的**安全 / 合规审查员**,代运营 / owner 审一个话题活动的草稿或待上线版本。
 产出是一份**审查报告 + 上线建议**,供运营 / 内部团队决定要不要把某版本 activate(上线)。
 
+**本 skill 的判定核心是确定性脚本 `scripts/audit.mjs`(红线全部编码在 `scripts/rules.mjs`),不是靠你手敲 grep。**
+你的职责:跑引擎 → 对引擎标 `[可疑]` 的项做人工语义复核 → 写结论。确定性的交给代码,只有真需要人判断的留给你。
+
 ## 你能做 / 不能做(铁律)
-- **只读**:拉版本清单、下载 OSS 产物、静态分析、对比变更、写报告。
-- **绝不**:上线(activate / publish prod 仅内部完整登录态,你这个令牌请求也会被 403)、改后端、提交代码、改产物。
-- **绝不持有 / 索取 / 回显用户完整登录态**。你**只用**一个只读的 `x-dev-publish-token`(见 §0),它绑定单个活动、调不动任何写接口,即便泄露也只能读本活动的版本清单。
+- **只读**:拉版本清单、下载 OSS 产物、跑 audit.mjs、读源码、写报告。
+- **绝不**:上线(activate / publish prod 仅内部完整登录态,你这个令牌也会被 403)、改后端、提交代码、改产物。
+- **绝不持有 / 索取 / 回显用户完整登录态**。你**只用**一个只读的 `x-dev-publish-token`(见 §0),绑单个活动、调不动写接口。
 - 报告里**不要打印任何令牌值**。
 
-## 背景(审什么、为什么)
-内嵌话题页是创作者 / AI 用 topic-sdk 搭的独立 Web 单页,被 nieta-app 在 `/tag?hashtag=X` 以**跨域 iframe** 内嵌,只读 `/v1/embed/*` 数据,写动作全由宿主承载。每发一版进一个 OSS 版本目录(`.../<activity_uuid>/<version>/`)。
-**上线 = 内部把某版本 activate**。你的任务:在 activate 之前,审这个版本的产物有没有踩红线(偷加外站脚本 / 写接口 / 越权 / 自绘宿主顶栏 / 暴露 OSS 真链等),并相对当前线上版指出**变更点**,让 owner 心里有数再上线。
-
-> **真安全边界在后端**(embed token 只读、`/v1/embed/*` 无写接口、token 三向隔离),你的静态审查是**加速人工把关 + 让变更可见**的一层,属 best-effort:产物是打包压缩过的,动态构造 / 混淆可能绕过正则——**拿不准就标「需人工复核」,绝不假装通过**。若能同时拿到创作者交付的**源码**就一起审(源码可读性远高于压缩产物)。
+## 输入(两个必需 + 一个条件)
+1. **`NIETA_ACTIVITY_UUID`**(必需):要审的话题活动 uuid。写进 `.env`。
+2. **cohub space 链接**(必需):被审内嵌页对应的 cohub space(形如 `https://cohub.run/spaces/<id>`)——
+   **产物是压缩的,源码可读性远高于压缩产物**;审查必须结合源码,不能只看压缩 bundle。
+   传法:`--space <url>` 或环境变量 `COHUB_SPACE_URL`。它会被记进报告 meta,并触发"源码合审"步骤(§2.5)。
+3. **`NIETA_DEV_PUBLISH_TOKEN`**(条件):拉版本清单要用(见 §0)。若你已直接拿到产物目录 / 源码,可只审本地。
 
 ## 0. 配置(token 复用创作者 SDK 那个)
 本目录放一个 `.env`(见 `.env.example`):
 - `NIETA_API_BASE`:如 `https://pre.api.talesofai.cn`(pre)或 prod 基址。
 - `NIETA_ACTIVITY_UUID`:要审的话题活动 uuid。
-- `NIETA_DEV_PUBLISH_TOKEN`:**和创作者发布用的是同一个 dev-publish 令牌**(在 app 内「生成开发令牌」拿到,绑该活动、只读)。权限足够:能调 `versions` 列版本;OSS 产物公开可读、下载连令牌都不用。
-- `NIETA_DEVELOP_PASS`:pre 联调需要(填 `1`);prod 不设。
+- `NIETA_DEV_PUBLISH_TOKEN`:**和创作者发布同一个 dev-publish 令牌**(app 内「生成开发令牌」,绑该活动、只读)。
+- `NIETA_DEVELOP_PASS`:pre 联调填 `1`;prod 不设。
+- `COHUB_SPACE_URL`:被审内嵌页对应的 cohub space 链接(也可用 `--space` 传)。
 
-## 1. 拉版本清单 + 下载产物
+## 1. 一条龙审查(推荐:自动化流程的主入口)
 ```
-node scripts/fetch-versions.mjs                # 只列版本表(谁发草稿 / 谁上线 / 哪个是 active)
-node scripts/fetch-versions.mjs --version 9    # 列版本 + 下载第 9 版产物到 _review/v9/
-node scripts/fetch-versions.mjs --review       # 下载「当前 active」+「最新草稿」两版,供变更对比
+node scripts/audit.mjs --review --space https://cohub.run/spaces/<id>
 ```
-脚本做的事:
-- `GET {API_BASE}/v1/topic-embed/activities/{uuid}/embed-page/versions`(头 `x-dev-publish-token`,pre 加 `x-develop-pass`)→ 拿 `versions[]`(version / url / created_at / **created_by=谁发的草稿** / 顶层 **activated_by=谁上的线** / activated_at)+ `active_version` + `enabled`。
-- 对要审的版本,fetch 它的 OSS `url`(公开,无需令牌)→ `index.html` → 解析其引用的 `<script src>` / `<link href>` / `<img>` 等 → **同源(oss)资源下载到 `_review/vN/`**,**外站资源直接记进 `_review/vN/_external-refs.txt`**(这本身就是审查信号,见 §2 第 1 条)。
-- 记录该版本 HTML 的实际响应头 `Content-Security-Policy` 到 `_review/vN/_csp.txt`。
+它会:① `fetch-versions.mjs --review` 拉版本清单 + 下载「当前 active」和「最新草稿」两版产物 →
+② 对最新草稿跑全部红线 → ③ 与 active 做变更对比 → ④ 写 `_review/vN/audit-report.{json,md}` → ⑤ **按判定退出**。
 
-## 2. 按红线逐项审查(详见 `references/checklist.md`)
-对 `_review/vN/` 下的产物逐条查(grep / 读),每条判 **[通过] / [可疑] / [违规]** 并附证据(文件 + 匹配片段):
-1. **外站资源**:`<script src=>` / `import()` / `<link>` / `<img>` / 字体 / 媒体 指向**非同源、非 `oss.talesofai.cn`** 的域 → 违规(脚本已初筛 `_external-refs.txt`,逐条核)。
-2. **写接口痕迹**:`fetch`/`XMLHttpRequest` 带 `method: POST/PUT/DELETE/PATCH`、或打非 `/v1/embed/*` 的写 API → 违规(内嵌页只读)。
-3. **token 落地**:`localStorage` / `sessionStorage` / `document.cookie` 写 token → 违规。
-4. **history.pushState / replaceState** → 违规(污染宿主返回栈)。
-5. **CSP — 不审"缺不缺",审"产物会不会破坏 CSP 安全预期"**:CSP 由**部署 / 宿主动态注入到 OSS 响应头**,产物 HTML 里**本就没有、也不该有**——所以**产物里看不到 CSP 是正常的,绝不报「CSP 缺失」**(SDK / 创作者产物不管 CSP)。审查只看产物有没有**破坏**我们的 CSP 安全预期:
-   - 产物**自设** `<meta http-equiv="content-security-policy">` → 违规(页面不该自定义 CSP,会与注入头取交集致白屏 / 或试图绕过)。
-   - 产物引用**外站脚本 / 资源**(本会被注入的 CSP 拦)→ 即 §1,这才是 CSP 预期被触碰的真实信号。
-   - `_csp.txt` **仅供能取到响应头时**核对注入是否符合预期(`script-src` 不该含外站 / `*` / `'unsafe-eval'`);若取不到(dev 草稿 / 缓存 / 无 token)**不算产物违规**,本项跳过即可。
-6. **自绘宿主顶栏(D9)**:`position:fixed|sticky` + `top:0`、「返回 / 分享 / 主页 / 举报」按钮文案、`env(safe-area-inset-*)` 顶部内边距 → 违规(这些宿主已提供,重画=冲突)。
-7. **暴露 OSS 真链**:`oss.talesofai.cn` 出现在 `<a href>` / 分享 / 可见文案 → 违规(对外身份须 `app.nieta.art/tag?hashtag=X`)。
-8. **越界 API**:`window.parent` 读 DOM/storage、`window.parent.postMessage`、`navigator.serviceWorker.register`、`new EventSource` → 违规。
-9. **运行期机密泄露**:产物(含 sourcemap)里出现 API key / secret / 令牌(`x-token` / `x-dev-publish-token` / `eyJ...` JWT)、或内部 url / 后台路径(非 `/v1/embed/*` 的内部接口、`upload-grant`、内网域名)→ 至少可疑,确系机密即违规。**草稿 OSS 目录公开可读、下载连令牌都不用——uuid 不可猜 + 草稿未挂载都不是访问控制,写进产物的机密等同公开。**
+**退出码(自动化流程直接判):**
+- `0` = 全通过 → 建议 **可上线**
+- `2` = 有 `[可疑]` → **需人工复核**(严进:可疑即挡,不放行)
+- `1` = 有 `[违规]` → **拒绝上线**
+- `3` = 运行错误(参数/目录/IO,与审查结论无关)
 
-## 3. 变更对比(相对当前 active)
-用 `--review` 同时下了 active 版与待审版后,对比两版的**关键信号集合**(不必逐字 diff 压缩产物):
-- 外站域名集合(产物里出现的所有 host)——待审版**新增**了哪些外站?
-- `<script src>` 列表、可疑 API 调用、`nieta://` 之外新增的 scheme / 跳转 URL。
-给一句结论:**「相对线上 v{active},本版新增风险信号 X / 移除 Y / 无变化」**,让 owner 聚焦变更而非全量。
+分步用法:
+```
+node scripts/fetch-versions.mjs --review            # 只下载,不判定
+node scripts/audit.mjs --dir _review/v9             # 审已下载的某版
+node scripts/audit.mjs --dir _review/v9 --base _review/v7   # 审 v9 且与 v7 对比
+node scripts/audit.mjs --dir _review/v9 --json-only # 只出 json(自动化流程消费,不打人读表)
+```
+
+## 2. 引擎判定了什么(红线清单见 `scripts/rules.mjs` + 人读说明 `references/checklist.md`)
+`rules.mjs` 是**唯一事实源**;checklist.md 只是给人读的说明,不再是执行依据(避免手抄正则漂移)。关键红线:
+- **`sdk-integration`(违规)**:产物里找不到 topic-sdk 握手指纹(`createTopicSDK`/`getEmbedToken`/`"hello"`/`{v:2}`)
+  = 页面**没接官方 SDK**。宿主只认 SDK 发起的 frame-bridge v2 hello 握手,自造 postMessage 协议不被认可 → 必然白屏。
+- **`self-made-bridge`(可疑)**:直接 `postMessage` + 自造 `*-ready` 事件名 = 绕过 SDK 自己发明握手协议。
+- 其余:外站资源 / 写接口 / token 落地 / pushState / 自设 CSP / 自绘顶栏(D9)/ 暴露 OSS 真链 / 越界 API / 机密泄露。
+
+## 2.5 源码合审(给了 `--space` 时必做)
+引擎审的是**压缩产物**,只能 best-effort。拿到 cohub space 后,**必须**再结合源码确认引擎标 `[可疑]` 的项:
+- 打开 space,重点看 `package.json`(有没有 `@talesofai/topic-sdk` 依赖)、入口文件(`main.tsx`/`boot.ts` 等,有没有 `createTopicSDK`)。
+- **`package.json` 无 topic-sdk 依赖 = 铁证没接 SDK**,即便引擎因某种字符串巧合没报 `sdk-integration`,你也要在报告里判违规。
+- 源码里 `[可疑]` 项(如 D9 顶栏、非 embed API)读上下文确认是真违规还是误报。
+
+## 3. 你(人/agent)的复核职责
+引擎判 `2`(可疑)时,**不要直接放行也不要直接拒绝**,逐条复核 `audit-report.json` 的 `[可疑]` 项:
+- 结合源码(§2.5)与渲染判断是真违规还是误报(如"分享"二字在正文 vs 真画了分享按钮)。
+- 复核结论写进报告:可疑 → 澄清为 `[通过]`(附理由)或升级为 `[违规]`。
+- **拿不准就维持"需人工复核",绝不假装通过**——漏放一个违规版本上线的代价 >> 多让人复核一项。
 
 ## 4. 产出报告
-输出一份 markdown:
-- **版本元信息**:审的是 v?、谁发的(created_by)、当前 active 是 v?(谁上的线 activated_by)。
-- **逐红线结论**:[通过] / [可疑] / [违规] + 证据(文件 + 片段)。
-- **变更摘要**:相对 active 的新增 / 移除风险信号。
-- **上线建议**:`可上线` / `需人工复核(列出哪几项)` / `拒绝上线(列出违规)`。
-- **上线三元组(建议 `可上线` 时必给,闭合"审查→内部上线"断点)**:报告结尾**必须**明确写出
-  ① **建议 activate 的 version**(本次审过、判定可上线的那一版,如 `v9`);
-  ② **该 version 的 activity_uuid**(`NIETA_ACTIVITY_UUID`,即本次审查的活动 uuid——上线动作按 activity 锚定);
-  ③ **当前 active version**(`active_version`,即现在线上挂的是哪一版;若 `enabled=false` / 未绑定则注明"当前无 active")。
-  这三元组让内部上线者无需回头猜:对哪个 activity、把哪一版 activate、相对现状是首发还是换版。
-  > **交接指针(本 skill 到此为止,不负责上线)**:审查只产报告,**不 activate、不上线**(scoped 令牌也调不动 prod/activate,会被后端 403)。
-  > 把上面三元组连同报告交给**内部运营(`is_internal` 账号)**,由其按**内部上线 runbook**执行 `activate`(或 `deploy:prod`)。
-  > 该 runbook 是 `skill-internal-publish/`(位于 **topic-sdk 仓库根**),**不随创作者项目交付、也不在本审查仓内**——你只交付报告 + 三元组,上线由持完整登录态的内部账号在那边完成。
-- 诚实标注静态审查的局限(哪些项只能 best-effort、建议补人工看渲染 / 审源码)。
+`audit.mjs` 已生成结构化 `audit-report.json` + 人读 `audit-report.md`。你在其上补:
+- **版本元信息**:审的是 v?、谁发的(created_by)、当前 active 是 v?(谁上线 activated_by)、cohub space 链接。
+- **人工复核结论**:对每条 `[可疑]` 的最终判定 + 理由(结合源码/渲染)。
+- **上线建议**:`可上线` / `需人工复核(列出哪几项)` / `拒绝上线(列出违规)`,与引擎退出码一致或说明为何调整。
+- **上线三元组(建议 `可上线` 时必给)**:
+  ① 建议 activate 的 **version**;② 该 version 的 **activity_uuid**;③ **当前 active version**(无则注明)。
+  > **交接指针**:审查只产报告,**不 activate、不上线**(scoped 令牌也调不动 prod)。把报告 + 三元组交
+  > **内部运营(`is_internal` 账号)**,由其按 `skill-internal-publish/`(topic-sdk 仓根)runbook 执行 activate。
+- 诚实标注静态审查局限(哪些只能 best-effort、建议补人工看渲染)。
 
 ## 校验门
-- 每条 [违规] / [可疑] 都有**文件 + 证据片段**,不空口下结论。
+- 审查结论以 `audit.mjs` 退出码 + `audit-report.json` 为准,人工复核只收窄不放宽(可疑不能无理由改通过)。
+- 每条 [违规] / [可疑] 都有**文件 + 证据片段**(引擎已附),不空口下结论。
+- 给了 `--space` 就**必须**做 §2.5 源码合审(至少核 package.json 依赖)。
 - 没有调用任何写接口、没有 activate、没有回显令牌值。
-- 拿不准的标「需人工复核」,不假装通过——漏放一个违规版本上线的代价 >> 多让人复核一项。
