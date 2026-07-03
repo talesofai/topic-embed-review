@@ -61,18 +61,28 @@ node scripts/audit.mjs --dir _review/v9 --base _review/v7   # 审 v9 且与 v7 �
 node scripts/audit.mjs --dir _review/v9 --json-only # 只出 json(自动化流程消费,不打人读表)
 ```
 
-## 2. 引擎判定了什么(红线清单见 `scripts/rules.mjs` + 人读说明 `references/checklist.md`)
-`rules.mjs` 是**唯一事实源**;checklist.md 只是给人读的说明,不再是执行依据(避免手抄正则漂移)。关键红线:
-- **`sdk-integration`(违规)**:产物里找不到 topic-sdk 握手指纹(`createTopicSDK`/`getEmbedToken`/`"hello"`/`{v:2}`)
-  = 页面**没接官方 SDK**。宿主只认 SDK 发起的 frame-bridge v2 hello 握手,自造 postMessage 协议不被认可 → 必然白屏。
+## 2. 源码级审查(核心:靠 sourcemap 还原,不跟压缩产物较劲)
+标准 scaffold+deploy 发布的产物,每个 `.js` 旁都带一个 **hidden sourcemap**(`.js.map`):map 上了 OSS
+但 HTML/JS 里不留 `sourceMappingURL` 引用——**普通用户/DevTools 看不到,但审查方主动取 `.js.map` 就能 100% 还原
+创作者原始 TS/TSX 源码**。这就是"审查拿不到编译前源码"这个难题的解法:
+- `fetch-versions.mjs` 下载产物时会**自动探测并下载每个 `.js` 的 `.js.map`**(它不在 HTML 引用里,靠约定路径探测)。
+- `audit.mjs` 读 `.js.map` 的 `sourcesContent` **还原出源文件**,红线判定跑在**还原源码**上,证据指向 `«src»/原文件:行`。
+  报告顶部标 **审查级别:源码级 ✅ / 压缩产物级 ⚠**,一眼知道这次审的是源码还是压缩代码。
+
+`rules.mjs` 是红线**唯一事实源**;checklist.md 只是人读说明(避免手抄正则漂移)。关键红线:
+- **`sdk-integration`(违规)**:找不到 topic-sdk 握手指纹(`createTopicSDK`/`getEmbedToken`/`"hello"`/`{v:2}`)
+  = 页面**没接官方 SDK**。宿主只认 SDK 的 frame-bridge v2 hello 握手,自造 postMessage 协议不被认可 → 必然白屏。
+- **`no-sourcemap`(可疑)**:某版 `.js` 全无 `.js.map` = 疑似**没走标准发布流程**(自己写脚本传 / 关了 sourcemap),
+  合规链路被绕过。审查退化为压缩产物级,应要求按标准流程(scaffold+deploy)重发带 map 的版本再审。
 - **`self-made-bridge`(可疑)**:直接 `postMessage` + 自造 `*-ready` 事件名 = 绕过 SDK 自己发明握手协议。
 - 其余:外站资源 / 写接口 / token 落地 / pushState / 自设 CSP / 自绘顶栏(D9)/ 暴露 OSS 真链 / 越界 API / 机密泄露。
 
-## 2.5 源码合审(给了 cohub 链接时必做)
-引擎审的是**压缩产物**,只能 best-effort。拿到 cohub session/space 后(session 归一到其所属 space 看源码),**必须**再结合源码确认引擎标 `[可疑]` 的项:
-- 打开 space,重点看 `package.json`(有没有 `@talesofai/topic-sdk` 依赖)、入口文件(`main.tsx`/`boot.ts` 等,有没有 `createTopicSDK`)。
-- **`package.json` 无 topic-sdk 依赖 = 铁证没接 SDK**,即便引擎因某种字符串巧合没报 `sdk-integration`,你也要在报告里判违规。
-- 源码里 `[可疑]` 项(如 D9 顶栏、非 embed API)读上下文确认是真违规还是误报。
+## 2.5 源码合审补强(有 cohub 链接时;拿不到 sourcemap 时的必要补充)
+sourcemap 还原已覆盖大部分源码级审查;**当某版 `no-sourcemap`(取不到 map)时,源码合审从可选变必须**——
+用 cohub session/space 链接拿源码补上(session 归一到其所属 space):
+- 打开 space,重点看 `package.json`(有没有 `@talesofai/topic-sdk` 依赖)、入口文件(`main.tsx`/`boot.ts`,有没有 `createTopicSDK`)。
+- **`package.json` 无 topic-sdk 依赖 = 铁证没接 SDK**,直接判 `sdk-integration` 违规,不管压缩产物正则是否巧合触发。
+- 引擎标 `[可疑]` 的项(D9 顶栏、非 embed API 等)结合源码读上下文,确认真违规还是误报。
 
 ## 3. 你(人/agent)的复核职责
 引擎判 `2`(可疑)时,**不要直接放行也不要直接拒绝**,逐条复核 `audit-report.json` 的 `[可疑]` 项:

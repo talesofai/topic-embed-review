@@ -3,8 +3,14 @@
 给运营 / owner 用的**审查** skill,**独立于**创作者 topic-sdk skill(不放 sdk 仓)。放进 cohub space 的 skills 目录,即可让 agent 据此审查一个话题活动的待上线版本。
 
 ## 它做什么
-拉某话题活动的内嵌页版本清单 → 下载各版本 OSS 产物 → **跑确定性红线审查引擎(`audit.mjs`,红线编码在 `rules.mjs`)** →
-对可疑项结合源码人工复核 → 对比版本变更 → 出给 owner 的上线建议报告。**全程只读,不上线、不持用户完整登录态。**
+拉某话题活动的内嵌页版本清单 → 下载各版本 OSS 产物(**含 hidden sourcemap**)→
+**用 sourcemap 还原创作者原始 TS/TSX 源码 → 跑确定性红线审查引擎(`audit.mjs`,红线编码在 `rules.mjs`)对源码判定** →
+对可疑项人工复核 → 对比版本变更 → 出给 owner 的上线建议报告。**全程只读,不上线、不持用户完整登录态。**
+
+> **审查拿不到"编译前源码"怎么办?** —— 靠 sourcemap。标准 scaffold+deploy 发布的产物每个 `.js` 都带一个
+> `sourcemap:"hidden"` 生成的 `.js.map`(上了 OSS 但 HTML 不引用,普通用户/DevTools 看不到)。审查侧主动取 `.js.map`
+> 就能 **100% 还原创作者原始 TS/TSX**,红线判定跑在还原源码上(证据指向 `«src»/原文件:行`),而不是跟压缩产物较劲。
+> 某版取不到 map = 疑似没走标准发布流程,触发 `no-sourcemap` 红线要求重发。
 
 审查判定是**机器可判**的(不是靠 agent 手敲 grep):`audit.mjs` 产出结构化 `audit-report.json` + 人读 `audit-report.md`,
 并按判定**退出**(`0`=可上线 / `2`=需人工复核 / `1`=拒绝上线 / `3`=运行错误)——可直接挂自动化流程。

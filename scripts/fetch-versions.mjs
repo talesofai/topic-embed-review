@@ -89,6 +89,17 @@ async function downloadVersion(env, ver, url) {
   const refs = [...html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
   const external = [];
   const downloaded = [];
+  const jsUrls = []; // 记录下载到的同源 .js,稍后探测它们的 hidden sourcemap(.js.map)
+  const saveOss = async (absHref) => {
+    const r = await fetch(absHref);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    const rel = absHref.startsWith(baseDir) ? absHref.slice(baseDir.length) : absHref.split("/").pop();
+    const out = join(dir, rel);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, buf);
+    return rel;
+  };
   for (const ref of [...new Set(refs)]) {
     if (ref.startsWith("data:") || ref.startsWith("#")) continue;
     let abs;
@@ -103,16 +114,26 @@ async function downloadVersion(env, ver, url) {
       continue;
     }
     try {
-      const r = await fetch(abs.href);
-      if (!r.ok) continue;
-      const buf = Buffer.from(await r.arrayBuffer());
-      const rel = abs.href.startsWith(baseDir) ? abs.href.slice(baseDir.length) : abs.pathname.split("/").pop();
-      const out = join(dir, rel);
-      mkdirSync(dirname(out), { recursive: true });
-      writeFileSync(out, buf);
+      const rel = await saveOss(abs.href);
+      if (rel == null) continue;
       downloaded.push(rel);
+      if (/\.m?js$/i.test(abs.href)) jsUrls.push(abs.href);
     } catch {
       /* 下载失败忽略,审查时会发现缺文件 */
+    }
+  }
+  // hidden sourcemap:scaffold 用 sourcemap:"hidden",map 上了 OSS 但 HTML/JS 里不留 sourceMappingURL 引用,
+  // 故上面按引用扫不到——这里对每个 .js 主动探测同名 .js.map 并下载。审查侧据此还原源码(源码级审查)。
+  let mapCount = 0;
+  for (const jsHref of jsUrls) {
+    try {
+      const rel = await saveOss(jsHref + ".map");
+      if (rel != null) {
+        downloaded.push(rel);
+        mapCount += 1;
+      }
+    } catch {
+      /* 没有 map 很正常(未走标准发布 / 未开 sourcemap),审查侧会据缺 map 提示降级人工 */
     }
   }
   writeFileSync(
@@ -120,7 +141,11 @@ async function downloadVersion(env, ver, url) {
     external.length ? external.join("\n") + "\n" : "(index.html 内无外站资源引用)\n",
   );
   console.log(`[review] v${ver} → ${dir}`);
-  console.log(`  index.html + ${downloaded.length} 个同源资源已下载;CSP 见 _csp.txt`);
+  console.log(`  index.html + ${downloaded.length} 个同源资源已下载(含 ${mapCount} 个 sourcemap);CSP 见 _csp.txt`);
+  if (mapCount === 0 && jsUrls.length) {
+    console.log(`  ⚠ ${jsUrls.length} 个 .js 均无对应 .js.map——该版可能未走标准发布(scaffold+deploy)/未开 sourcemap;`);
+    console.log(`    审查将退化为压缩产物级(可靠性下降),建议要求重新按标准流程发布带 sourcemap 的版本。`);
+  }
   if (external.length) console.log(`  ⚠ ${external.length} 个外站资源引用(见 _external-refs.txt,逐条核红线 §1)`);
 }
 

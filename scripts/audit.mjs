@@ -43,7 +43,7 @@ function extOf(p) {
   return i < 0 ? "" : p.slice(i).toLowerCase();
 }
 
-/** 递归收集目录下的文本产物文件(跳过审查自身产物 _*.txt / audit-report.*)。 */
+/** 递归收集目录下的文本产物文件(跳过审查自身产物 _*.txt / audit-report.* / .map 单独处理)。 */
 function collectFiles(dir) {
   const out = [];
   const walk = (d) => {
@@ -59,13 +59,55 @@ function collectFiles(dir) {
         walk(full);
         continue;
       }
-      // 跳过 skill 自己写的辅助文件,只审真产物
-      if (e.name.startsWith("_") || e.name.startsWith("audit-report.")) continue;
+      // 跳过 skill 自己写的辅助文件,只审真产物;.map 不直接当审查文本(它是还原源码的载体,单独处理)
+      if (e.name.startsWith("_") || e.name.startsWith("audit-report.") || e.name.endsWith(".map")) continue;
       out.push(full);
     }
   };
   walk(dir);
   return out;
+}
+
+/**
+ * 从目录里的 .js.map(hidden sourcemap)还原原始源码文件。
+ * vite/tsup 的 map 默认带 `sources`(原始路径)+ `sourcesContent`(原文),故无需第三方 sourcemap 库,
+ * 直接读 sourcesContent 即拿到创作者写的 TS/TSX 原文——审查看源码而非压缩产物,可读性天差地别。
+ * 返回:{ sources: [{path, content}], mapCount, jsWithMap, jsTotal }
+ */
+function recoverSourcesFromMaps(dir) {
+  const sources = [];
+  const seen = new Set();
+  let mapCount = 0;
+  let jsWithMap = 0;
+  const jsFiles = collectFiles(dir).filter((f) => /\.m?js$/i.test(f));
+  const jsTotal = jsFiles.length;
+  for (const js of jsFiles) {
+    const mapPath = js + ".map";
+    if (!existsSync(mapPath)) continue;
+    jsWithMap += 1;
+    let map;
+    try {
+      map = JSON.parse(readFileSync(mapPath, "utf8"));
+    } catch {
+      continue;
+    }
+    mapCount += 1;
+    const srcs = map.sources || [];
+    const contents = map.sourcesContent || [];
+    for (let i = 0; i < srcs.length; i++) {
+      const content = contents[i];
+      if (typeof content !== "string" || !content) continue;
+      // 归一源路径:去掉 webpack/vite 前缀噪声,只保留可读相对路径
+      let p = String(srcs[i] || `source-${i}`).replace(/^(?:\.\.\/)+/, "").replace(/^(?:webpack|vite):\/\/\/?/i, "");
+      // 只关心创作者自己的源码,跳过 node_modules / SDK 内部(审查目标是创作者代码)
+      if (/node_modules|[\\/]\.pnpm[\\/]/.test(p)) continue;
+      const key = p + "::" + content.length;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      sources.push({ path: "«src»/" + p, content });
+    }
+  }
+  return { sources, mapCount, jsWithMap, jsTotal };
 }
 
 /** 一条规则对一个文件的文本做匹配,返回命中证据数组。 */
@@ -157,10 +199,35 @@ function auditDir(dir) {
     } catch {
       continue;
     }
-    loaded.push({ relPath, text, lines: text.split(/\r?\n/) });
+    loaded.push({ relPath, text, lines: text.split(/\r?\n/), origin: "artifact" });
   }
 
+  // 源码级审查:用 hidden sourcemap 还原创作者原始 TS/TSX,并入 loaded(标 .tsx 以套 code-scope 规则)。
+  // 源码可读性远高于压缩产物——红线判定看还原源码,证据也指向 «src»/原文件:行,人一眼能看懂。
+  const recovered = recoverSourcesFromMaps(dir);
+  for (const s of recovered.sources) {
+    loaded.push({ relPath: s.path, text: s.content, lines: s.content.split(/\r?\n/), origin: "source" });
+  }
+  const hasSource = recovered.sources.length > 0;
+
   const findings = [];
+
+  // 源码可得性门:走标准 scaffold+deploy 的版本每个 .js 都带 .js.map(sourcemap:"hidden")。
+  // 一个 map 都没有 = 该版极可能没走标准发布流程(自己写脚本传/关了 sourcemap),这本身就是合规链路被绕过的信号。
+  // 严进:标 [可疑](拉高到需人工),同时逼出"要求按标准流程重发带 map 的版本"。
+  if (recovered.jsTotal > 0 && recovered.mapCount === 0) {
+    findings.push({
+      id: "no-sourcemap",
+      title: "产物无 sourcemap(无法源码级审查 / 疑未走标准发布)",
+      verdict: "suspect",
+      kind: "negative",
+      evidence: [{ file: "(整个产物)", line: 0, snippet: `${recovered.jsTotal} 个 .js 均无对应 .js.map` }],
+      note:
+        "标准 scaffold+deploy 发布的产物每个 .js 都带 hidden sourcemap(.js.map)。一个都没有 = 疑似没走标准流程" +
+        "(自己写脚本上传 / 关了 sourcemap),合规链路被绕过。审查只能退化为压缩产物级,可靠性下降——" +
+        "建议要求创作者按标准流程(scaffold + deploy.mjs)重新发布带 sourcemap 的版本再审。",
+    });
+  }
   for (const rule of RULES) {
     if (rule.kind === "positive") {
       // positive:全目录范围内只要有一个 code 文件命中指纹即算"存在";一个都没命中 = 违规。
@@ -231,7 +298,18 @@ function auditDir(dir) {
   }
 
   const overall = verdictFromFindings(findings);
-  return { dir: relative(SKILL_ROOT, dir).replace(/\\/g, "/"), fileCount: files.length, findings, overall };
+  return {
+    dir: relative(SKILL_ROOT, dir).replace(/\\/g, "/"),
+    fileCount: files.length,
+    findings,
+    overall,
+    sourcemap: {
+      level: hasSource ? "source" : "artifact-only",
+      jsTotal: recovered.jsTotal,
+      jsWithMap: recovered.jsWithMap,
+      recoveredSources: recovered.sources.length,
+    },
+  };
 }
 
 /** 变更对比:基线目录相对被审目录,红线 id 集合差异。 */
@@ -272,6 +350,21 @@ function renderMarkdown(result, diff, meta) {
   }
   L.push(`## 判定:${result.overall.label}（exitCode=${result.overall.exitCode}）`);
   L.push("");
+  const sm = result.sourcemap;
+  if (sm) {
+    if (sm.level === "source") {
+      L.push(
+        `**审查级别:源码级** ✅ — 用 hidden sourcemap 从 ${sm.jsWithMap}/${sm.jsTotal} 个 .js 还原出 ${sm.recoveredSources} 个源文件,` +
+          `红线判定基于创作者原始 TS/TSX 源码(可读性远高于压缩产物,证据指向 «src»/原文件)。`,
+      );
+    } else {
+      L.push(
+        `**审查级别:压缩产物级** ⚠ — ${sm.jsTotal} 个 .js 无可用 sourcemap,只能审压缩代码(best-effort,混淆可绕过)。` +
+          `见下方 no-sourcemap 红线;建议要求按标准流程(scaffold+deploy)重发带 map 的版本再审。`,
+      );
+    }
+    L.push("");
+  }
   L.push(`扫描文件数:${result.fileCount};命中红线:${result.findings.length} 条。`);
   L.push("");
   if (diff) {

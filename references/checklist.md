@@ -15,6 +15,14 @@
   SDK 内部通信不暴露这类自造事件名;命中需结合源码(`package.json` 有没有 topic-sdk 依赖)确认。
 - **源码合审**:`package.json` 无 `@talesofai/topic-sdk` 依赖 = 铁证没接 SDK,直接判违规(即便压缩产物字符串巧合没触发正则)。
 
+## 0b. sourcemap 与源码级审查(rules: `no-sourcemap`)
+- **为什么审查能拿到源码**:标准 scaffold+deploy 发布的产物,每个 `.js` 都带 `sourcemap:"hidden"` 生成的 `.js.map`
+  (map 上了 OSS 但 HTML 不留 `sourceMappingURL` 引用,普通用户/DevTools 看不到)。`fetch-versions.mjs` 会主动探测下载,
+  `audit.mjs` 读 map 的 `sourcesContent` **还原原始 TS/TSX**,红线判定跑在还原源码上——这就是"拿不到编译前源码"的解法。
+- `no-sourcemap`(**可疑**):某版 `.js` 全部取不到 `.js.map` = 疑似**没走标准发布流程**(自己写脚本上传 / 关了 sourcemap),
+  合规链路被绕过。此时审查退化为压缩产物级(best-effort),应**要求创作者按标准流程(scaffold+deploy)重发带 map 的版本**再审,
+  并用 cohub 源码(§见 SKILL 2.5)补强。
+
 ---
 
 以下为历史红线的人读说明(实现见 rules.mjs;审查用 audit.mjs,不要照抄 grep):
