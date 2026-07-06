@@ -12,16 +12,17 @@
   **不会被宿主认可** → 页面必然加载失败(白屏)。这是确定性违规,拒绝上线。
 - `self-made-bridge`(**可疑**):直接 `window.parent.postMessage(...)`(含可选链 `?.`)配合自造的
   `*-ready` / `embed_ready` / `nieta-ready` 事件名 = 接入方绕过 SDK、自己发明握手协议(事故根因典型特征)。
-  SDK 内部通信不暴露这类自造事件名;命中需结合源码(`package.json` 有没有 topic-sdk 依赖)确认。
-- **源码合审**:`package.json` 无 `@talesofai/topic-sdk` 依赖 = 铁证没接 SDK,直接判违规(即便压缩产物字符串巧合没触发正则)。
+  SDK 内部通信不暴露这类自造事件名;命中需结合 sourcemap 还原的源码读上下文确认。
+- **源码级铁证**:sourcemap 还原的源码(强制要求,见 0b)里若**完全没有** `createTopicSDK` / `getEmbedToken` 握手调用
+  = 没接 SDK,直接判 `sdk-integration` 违规(比"`package.json` 有没有依赖"更强:有依赖 ≠ 真用了,有握手调用 = 真接了)。
 
 ## 0b. sourcemap 与源码级审查(rules: `no-sourcemap`)
 - **为什么审查能拿到源码**:标准 scaffold+deploy 发布的产物,每个 `.js` 都带 `sourcemap:"hidden"` 生成的 `.js.map`
   (map 上了 OSS 但 HTML 不留 `sourceMappingURL` 引用,普通用户/DevTools 看不到)。`fetch-versions.mjs` 会主动探测下载,
   `audit.mjs` 读 map 的 `sourcesContent` **还原原始 TS/TSX**,红线判定跑在还原源码上——这就是"拿不到编译前源码"的解法。
-- `no-sourcemap`(**可疑**):某版 `.js` 全部取不到 `.js.map` = 疑似**没走标准发布流程**(自己写脚本上传 / 关了 sourcemap),
-  合规链路被绕过。此时审查退化为压缩产物级(best-effort),应**要求创作者按标准流程(scaffold+deploy)重发带 map 的版本**再审,
-  并用 cohub 源码(§见 SKILL 2.5)补强。
+- `no-sourcemap`(**违规**):某版**任何 `.js` 缺可用 `.js.map`**(不存在或损坏) = **没完整走标准发布流程**(自己写脚本上传 / 关了 sourcemap / 删了 map),
+  合规链路被绕过,且该文件无法源码级审查。**强制要求每个 `.js` 都带可用 map**——缺一个即违规、拒绝上线,
+  打回**要求创作者按标准流程(scaffold+deploy)重发带完整 sourcemap 的版本**再审。(强制 map 后无"审不了源码"的中间态,故不再需要 cohub 源码补强。)
 
 ---
 
