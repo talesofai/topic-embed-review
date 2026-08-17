@@ -61,6 +61,12 @@ CSP 由**部署 / 宿主动态注入到 OSS 响应头**,产物 HTML 里本就没
 ## 7. 暴露 OSS 真链
 - `oss\.talesofai\.cn` 出现在 `<a href>` / 分享文案 / 可见 `textContent` → 违规(对外身份须 `app.nieta.art/tag?hashtag=X`;OSS url 仅供宿主挂 iframe,不对外)。
 
+## 7b. 图片未走 OSS 参数化优化(rules: `unoptimized-oss-image`)
+- **[可疑]**:`src=`/`srcSet=` 表达式里直接出现 `coverUrl`/`avatarUrl`/`bannerPic`/`smallBannerPic`/`headerPic`/`creatorAvatar` 等已知 OSS 图片字段,且同一表达式内没有 `ossImage`/`ossImageSrcSet` 字样——疑似把后端返回的原图 URL 未经处理就塞进了 `<img>`。
+- **为什么审**:这些字段都是 OSS 直出图,原图分辨率往往远超卡片实际渲染尺寸,原图直出=浪费流量、拖慢加载,内部要求必须走 `topic-sdk` 的 `ossImage(url, { width })` / `ossImageSrcSet(url, width)` 按渲染宽度 + 设备像素比拼 OSS resize/format 参数(见 `SKILL.md` §2 红线小结)。
+- **已知漏判(best-effort,不是穷举)**:① 间接变量赋值——`const src = ossImage(x.coverUrl, {width}); <img src={src}/>` 这种合规写法,和反过来不经处理的写法,本条都看不到,一视同仁漏判(不产生误导性通过,只是覆盖不到);② 除已知字段名外的其它取图写法(如拼字符串)不在覆盖范围内。
+- **怎么复核**:命中即需人工确认——结合 sourcemap 还原源码确认该字段最终是否经过 `ossImage`/`ossImageSrcSet`;也可以直接看网络面板里图片实际请求的分辨率/大小是否与卡片渲染尺寸匹配。确系已优化(只是写法绕过了正则),标 `[通过]` 并注明理由;确系原图直出,升级为需要求创作者改用 `ossImage` 重发。
+
 ## 8. 越界 API
 - `window\.parent` 读 DOM / storage、`window\.parent\.postMessage`(应只经 SDK bridge)→ 违规。
 - `navigator\.serviceWorker\.register` → 违规(跨域 sandbox iframe 内无效,只污染控制台)。
