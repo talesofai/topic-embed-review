@@ -238,16 +238,19 @@ export const RULES = [
     kind: "negative",
     scope: "code",
     patterns: [
-      // <img ... src={...}> 且表达式里直接出现已知图片字段名(coverUrl/avatarUrl/...)、表达式内又没有
-      // ossImage/ossImageSrcSet 字样 —— 疑似把后端返回的原图 URL 未经处理就塞进了 <img src>。
-      // 命中面窄(只抓 JSX src={} 这一种写法),间接变量赋值等抓不到,这是 best-effort 检测,不是穷举。
-      /<img\b[^>]*\bsrc\s*=\s*\{(?![^}]*\bossImage)[^}]*\b(?:coverUrl|avatarUrl|bannerPic|smallBannerPic|headerPic|creatorAvatar)\b[^}]*\}/,
+      // 锚定 src=/srcSet= 属性本身,不要求 <img 出现在同一行 —— audit.mjs 的 matchRule 是逐行扫描的,
+      // Prettier 格式化后多属性 <img> 的 src={} 几乎总是单独一行,要求 "<img...src={" 同行命中面约等于零
+      // (实测验证过:同行写法能抓到,换行写法完全漏判)。放宽后会连带命中 <video src>/<iframe src> 甚至
+      // 无关对象字面量 { src: x.avatarUrl } —— 可接受:本条是 suspect + allowExempt,宁可多报交给人复核,
+      // 也不能为了精确度把真正的违规漏掉(这条规则的唯一价值就是召回率)。
+      /\bsrc(?:Set)?\s*=\s*\{(?![^}]*\bossImage)[^}]*\b(?:coverUrl|avatarUrl|bannerPic|smallBannerPic|headerPic|creatorAvatar)\b[^}]*\}/,
     ],
     note:
       "coverUrl/avatarUrl/bannerPic 等都是 OSS 直出图,原图分辨率往往远大于卡片实际渲染尺寸,直出=浪费流量+拖慢加载。" +
       "topic-sdk 提供 `ossImage(url, { width })` / `ossImageSrcSet(url, width)` 按渲染宽度+设备像素比拼 OSS resize/format 参数," +
-      "SKILL.md §4 要求所有图片字段过一遍这个函数再塞进 <img src>。命中本条需人工确认:是否真的原图直出,还是间接变量/其它合规写法" +
-      "被本条窄口径正则漏判(本条只抓 `src={...}` 内联写法)。",
+      "SKILL.md §2 红线小结已收录本条,要求所有图片字段过一遍这个函数再用。命中本条需人工确认:是否真的原图直出。" +
+      "已知漏判:① 间接变量赋值(`const src = ossImage(x.coverUrl,{width}); <img src={src}/>` 或反过来不经处理的写法," +
+      "本条对两者一视同仁地看不到);② 字段名以外的其它写法(如直接拼字符串)。这两类都不在本条覆盖范围内,best-effort,不是穷举。",
     allowExempt: true,
   },
 

@@ -73,6 +73,7 @@ node scripts/audit.mjs --dir _review/v9 --json-only # 只出 json(自动化流�
   (自己写脚本传 / 关了 sourcemap / 删了 map),合规链路被绕过,且该文件无法源码级审查。**强制要求每个 `.js` 都带可用 map**——
   缺一个即违规、拒绝上线,打回按标准流程(scaffold+deploy)重发带完整 sourcemap 的版本再审。
 - **`self-made-bridge`(可疑)**:直接 `postMessage` + 自造 `*-ready` 事件名 = 绕过 SDK 自己发明握手协议。
+- **`unoptimized-oss-image`(可疑)**:`src=`/`srcSet=` 直出 `coverUrl`/`avatarUrl`/`bannerPic` 等已知 OSS 图片字段、未经 `ossImage`/`ossImageSrcSet`(topic-sdk 提供)处理 = 疑似原图直出,内部要求必须走参数化优化,详见 checklist §7b。
 - 其余:外站资源 / 写接口 / token 落地 / pushState / 自设 CSP / 自绘顶栏(D9)/ 暴露 OSS 真链 / 越界 API / 机密泄露。
 
 > 源码级审查的源码**全部来自 sourcemap 还原**(§2 上文);既然强制每个 `.js` 都带可用 map,还原不出源码的版本
