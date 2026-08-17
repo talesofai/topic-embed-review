@@ -230,6 +230,27 @@ export const RULES = [
     allowExempt: true,
   },
 
+  // ——— 图片未走 OSS 参数化优化 ———
+  {
+    id: "unoptimized-oss-image",
+    title: "图片疑似原图直出(未走 ossImage/ossImageSrcSet 参数化)",
+    severity: "suspect",
+    kind: "negative",
+    scope: "code",
+    patterns: [
+      // <img ... src={...}> 且表达式里直接出现已知图片字段名(coverUrl/avatarUrl/...)、表达式内又没有
+      // ossImage/ossImageSrcSet 字样 —— 疑似把后端返回的原图 URL 未经处理就塞进了 <img src>。
+      // 命中面窄(只抓 JSX src={} 这一种写法),间接变量赋值等抓不到,这是 best-effort 检测,不是穷举。
+      /<img\b[^>]*\bsrc\s*=\s*\{(?![^}]*\bossImage)[^}]*\b(?:coverUrl|avatarUrl|bannerPic|smallBannerPic|headerPic|creatorAvatar)\b[^}]*\}/,
+    ],
+    note:
+      "coverUrl/avatarUrl/bannerPic 等都是 OSS 直出图,原图分辨率往往远大于卡片实际渲染尺寸,直出=浪费流量+拖慢加载。" +
+      "topic-sdk 提供 `ossImage(url, { width })` / `ossImageSrcSet(url, width)` 按渲染宽度+设备像素比拼 OSS resize/format 参数," +
+      "SKILL.md §4 要求所有图片字段过一遍这个函数再塞进 <img src>。命中本条需人工确认:是否真的原图直出,还是间接变量/其它合规写法" +
+      "被本条窄口径正则漏判(本条只抓 `src={...}` 内联写法)。",
+    allowExempt: true,
+  },
+
   // ——— 越界 API ———
   {
     id: "cross-boundary-api",
