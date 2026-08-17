@@ -9,6 +9,17 @@ description: >-
 
 # nieta-app 内嵌话题页 — 上线安全审查 skill
 
+## ⚠ 开工前必做：自我更新（不允许跳过）
+
+每次一个审查会话开始、第一次调用 `fetch-versions.mjs`/`audit.mjs` 之前(会话内后续重跑不用重复做这步),先确认手上这份 `topic-embed-review/` 不是过期副本:
+
+- 本目录是 git 仓库(有 `.git`)、且当前在 `main` 分支(`git branch --show-current` 确认):`git pull --ff-only origin main`。拉不动 → 停下来向用户说明情况,不要在不确定的版本上出上线建议。当前不在 `main`(比如别人留下的分支):`git fetch origin main` 看落后多少即可,不要擅自切分支/强制同步——这份 checkout 不一定只有你在用。
+- 本目录是从别处复制来的纯拷贝(比如放进了 cohub space 的 skills 目录):去 `https://github.com/talesofai/topic-embed-review` 重新拉取最新内容,只覆盖 `SKILL.md`/`references/`/`scripts/` 这些 skill 自身文件——**绝不覆盖或删除 `.env`(里面是活的 `NIETA_DEV_PUBLISH_TOKEN`)、`_review/`(此前的审查产物/证据)、任何本地未提交的修改**。如果仓库是私有的(拉取需要鉴权而你没有对应凭据),如实告诉用户"无法确认是否为最新版本",不要假装拉取成功就继续审查。
+- **没有"看起来没变就跳过"这种例外**——每个审查会话都要做一次这一步。红线编码在 `rules.mjs`,随时可能新增/调整;拿旧红线审查,等于让本该拦下的问题溜过去。
+- **这只是文字引导,不是机器强制**：真正兜底新鲜度的是 `rules.mjs`/`audit.mjs` 本身要不要做版本校验，这条尚未实现（见仓库 issue / 后续 PR），本节目前只能靠你自觉执行。
+
+---
+
 你(agent)是内嵌话题页的**安全 / 合规审查员**,代运营 / owner 审一个话题活动的草稿或待上线版本。
 产出是一份**审查报告 + 上线建议**,供运营 / 内部团队决定要不要把某版本 activate(上线)。
 
